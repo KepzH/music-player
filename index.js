@@ -20,11 +20,13 @@ app.get('/api/stream', (req, res) => {
 
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
-  // Panggil yt-dlp untuk mengambil direct audio URL
-  exec(`yt-dlp -g -f "bestaudio" "${youtubeUrl}"`, (error, stdout, stderr) => {
+  // Ditambahkan --extractor-args untuk melewati proteksi bot YouTube
+  const command = `yt-dlp -g -f "bestaudio" --extractor-args "youtube:player_client=android,web" "${youtubeUrl}"`;
+
+  exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
-      return res.status(500).json({ error: 'Gagal mengambil audio stream' });
+      return res.status(500).json({ error: 'Gagal mengambil audio stream', details: stderr });
     }
 
     const streamUrl = stdout.trim();
@@ -36,7 +38,7 @@ app.get('/api/stream', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server berjalan di port ${PORT}`);
 });
