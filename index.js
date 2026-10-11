@@ -18,11 +18,12 @@ app.get('/api/stream', (req, res) => {
     return res.status(400).json({ error: 'Parameter video ID dibutuhkan' });
   }
 
-  const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  // Bersihkan ID jika ada karakter ekstra (seperti garis miring di akhir)
+  const cleanId = videoId.replace('/', '');
+  const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Ditambahkan --extractor-args untuk melewati proteksi bot YouTube
-  // Menggunakan klien ios,web dengan tambahan parameter penyamaran
-  const command = `yt-dlp -g -f "bestaudio" --extractor-args "youtube:player_client=ios,web" "${youtubeUrl}"`;
+  // Menggunakan konfigurasi standar yang lebih tahan banting di server cloud
+  const command = `yt-dlp -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
 
   exec(command, (error, stdout, stderr) => {
     if (error) {
@@ -30,10 +31,14 @@ app.get('/api/stream', (req, res) => {
       return res.status(500).json({ error: 'Gagal mengambil audio stream', details: stderr });
     }
 
-    const streamUrl = stdout.trim();
+    const streamUrl = stdout.trim().split('\n')[0];
+    if (!streamUrl) {
+      return res.status(500).json({ error: 'Stream URL kosong dari yt-dlp' });
+    }
+
     return res.json({
       status: 'success',
-      id: videoId,
+      id: cleanId,
       stream_url: streamUrl,
     });
   });
