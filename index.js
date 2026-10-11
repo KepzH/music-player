@@ -5,10 +5,14 @@ const { exec } = require('child_process');
 const app = express();
 
 if (process.env.YOUTUBE_COOKIES) {
-  fs.writeFileSync('./cookies.txt', process.env.YOUTUBE_COOKIES);
+  // Hanya ambil baris yang berupa komentar Netscape atau mengandung domain youtube/google
+  const cleanCookies = process.env.YOUTUBE_COOKIES
+    .split('\n')
+    .filter(line => line.startsWith('#') || line.includes('youtube.com') || line.includes('google.com'))
+    .join('\n');
+
+  fs.writeFileSync('./cookies.txt', cleanCookies);
 }
-app.use(cors());
-app.use(express.json());
 
 // Endpoint untuk tes server
 app.get('/', (req, res) => {
