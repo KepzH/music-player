@@ -21,8 +21,9 @@ app.get('/api/stream', (req, res) => {
   const youtubeUrl = `https://www.youtube.com/watch?v=${videoId}`;
 
   // Ditambahkan --extractor-args untuk melewati proteksi bot YouTube
-  const command = `yt-dlp -g -f "bestaudio" --extractor-args "youtube:player_client=tv,mweb" "${youtubeUrl}"`;
-  
+  // Menggunakan klien ios,web dengan tambahan parameter penyamaran
+  const command = `yt-dlp -g -f "bestaudio" --extractor-args "youtube:player_client=ios,web" "${youtubeUrl}"`;
+
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
