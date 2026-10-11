@@ -3,6 +3,9 @@ const cors = require('cors');
 const { exec } = require('child_process');
 const app = express();
 
+if (process.env.YOUTUBE_COOKIES) {
+  fs.writeFileSync('./cookies.txt', process.env.YOUTUBE_COOKIES);
+}
 app.use(cors());
 app.use(express.json());
 
@@ -23,8 +26,7 @@ app.get('/api/stream', (req, res) => {
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
   // Menggunakan konfigurasi standar yang lebih tahan banting di server cloud
-  const command = `yt-dlp -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
-
+  const command = `yt-dlp --cookies cookies.txt -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
