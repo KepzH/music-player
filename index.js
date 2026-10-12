@@ -113,14 +113,14 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '-f', 'bestaudio/best',
+    '-f', 'bestaudio',
     '-o', '-',
     youtubeUrl
   ]);
@@ -129,8 +129,8 @@ app.get('/api/stream', (req, res) => {
 
   ytProcess.stderr.on('data', (data) => {
     const logStr = data.toString();
-    if (logStr.includes('ERROR')) {
-      console.error(`yt-dlp stream error: ${logStr}`);
+    if (logStr.includes('ERROR') || logStr.includes('WARNING')) {
+      console.error(`yt-dlp log: ${logStr}`);
     }
   });
 
