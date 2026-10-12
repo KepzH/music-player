@@ -47,7 +47,6 @@ function decryptBlowfishBlock(chunk, key) {
 
 // 3. Dekripsi Buffer Audio dengan Auto-Detect Header ID3/MP3
 function processAndDecryptAudio(rawBuffer, bfKey) {
-  // Cek apakah file diawali ID3 (0x49 0x44 0x33) atau MP3 Sync (0xFF)
   const isAlreadyCleanMP3 = 
     (rawBuffer[0] === 0x49 && rawBuffer[1] === 0x44 && rawBuffer[2] === 0x33) ||
     (rawBuffer[0] === 0xFF && (rawBuffer[1] & 0xE0) === 0xE0);
@@ -188,6 +187,16 @@ app.get('/api/deezer-stream', async (req, res) => {
 
     const bfKey = getBlowfishKey(realSngId);
     
+    // --- LOG DEBUG HEADER ---
+    console.log('[RAW HEADER HEX]:', rawBuffer.subarray(0, 16).toString('hex'));
+    try {
+      const testBlock0 = decryptBlowfishBlock(rawBuffer.subarray(0, 2048), bfKey);
+      console.log('[DECRYPTED HEADER HEX]:', testBlock0.subarray(0, 16).toString('hex'));
+      console.log('[DECRYPTED HEADER ASCII]:', testBlock0.subarray(0, 3).toString('ascii'));
+    } catch (e) {
+      console.log('[DECRYPT TEST ERROR]:', e.message);
+    }
+
     // Auto-Detect & Processing
     const finalBuffer = processAndDecryptAudio(rawBuffer, bfKey);
 
