@@ -40,8 +40,8 @@ app.get('/api/stream', (req, res) => {
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
   // Perintah yt-dlp menggunakan --js-runtimes deno sesuai environment Railway
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
-  
+  const command = `yt-dlp --cookies cookies.txt --extractor-args "youtube:player_client=ios,web" -g -f "bestaudio" "${youtubeUrl}"`;
+ 
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
