@@ -20,11 +20,13 @@ try {
   console.log("Catatan pip:", err.message);
 }
 
-// Menulis cookies Netscape dari Environment Variable Railway
+// Menulis cookies Netscape dari Environment Variable Railway dengan pengecekan ukuran
 if (process.env.YOUTUBE_COOKIES) {
   const cleanCookies = process.env.YOUTUBE_COOKIES.replace(/\r\n/g, '\n').trim();
   fs.writeFileSync('./cookies.txt', cleanCookies);
-  console.log("File cookies.txt berhasil disiapkan.");
+  console.log(`File cookies.txt berhasil disiapkan. Ukuran: ${cleanCookies.length} karakter.`);
+} else {
+  console.warn("PERINGATAN: YOUTUBE_COOKIES tidak ditemukan di Environment Variables!");
 }
 
 app.get('/', (req, res) => {
@@ -40,8 +42,13 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Menggunakan Deno runtime + cookies + klien tv/ios untuk menghindari eksperimen SABR-only
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github --extractor-args "youtube:player_client=tv" -g -f "bestaudio" "${youtubeUrl}"`;
+  // Pastikan file cookies.txt benar-benar ada sebelum yt-dlp dieksekusi
+  if (!fs.existsSync('./cookies.txt')) {
+    return res.status(500).json({ error: 'File cookies.txt gagal dibuat di server' });
+  }
+
+  // Menggunakan cookies.txt dengan runtime Deno yang sekarang sudah aktif
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
