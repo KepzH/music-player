@@ -1,7 +1,6 @@
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
-const { Transform } = require('stream');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -32,7 +31,7 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Fungsi Dekripsi Blok Blowfish CBC (2048 Bytes)
+// 2. Dekripsi Block Blowfish CBC (2048 Bytes)
 function decryptBlowfishBlock(chunk, key) {
   try {
     const iv = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -44,43 +43,28 @@ function decryptBlowfishBlock(chunk, key) {
   }
 }
 
-// 3. Transform Stream Khusus Dekripsi Deezer (Presisi 2048 Bytes & Bebas Buffer Misalignment)
-class DeezerDecryptor extends Transform {
-  constructor(bfKey) {
-    super();
-    this.bfKey = bfKey;
-    this.buffer = Buffer.alloc(0);
-    this.chunkIndex = 0;
-  }
+// 3. Dekripsi Seluruh Buffer Audio Secara Contiguous di Memori
+function decryptEntireAudioBuffer(audioBuffer, bfKey) {
+  const decryptedChunks = [];
+  let offset = 0;
+  let chunkIndex = 0;
 
-  _transform(chunk, encoding, callback) {
-    // Gabungkan data baru ke buffer internal
-    this.buffer = Buffer.concat([this.buffer, chunk]);
+  while (offset < audioBuffer.length) {
+    const chunkSize = Math.min(2048, audioBuffer.length - offset);
+    const block = audioBuffer.subarray(offset, offset + chunkSize);
 
-    // Hanya proses jika buffer memiliki minimal 2048 bytes
-    while (this.buffer.length >= 2048) {
-      const block = this.buffer.subarray(0, 2048);
-      this.buffer = this.buffer.subarray(2048);
-
-      // Blok ke-0, 3, 6, 9... dienkripsi oleh Deezer
-      if (this.chunkIndex % 3 === 0) {
-        const decryptedBlock = decryptBlowfishBlock(block, this.bfKey);
-        this.push(decryptedBlock);
-      } else {
-        this.push(block);
-      }
-      this.chunkIndex++;
+    // Tiap blok ke-0, 3, 6, 9... (ukuran harus 2048) dienkripsi oleh Deezer
+    if (chunkIndex % 3 === 0 && block.length === 2048) {
+      decryptedChunks.push(decryptBlowfishBlock(block, bfKey));
+    } else {
+      decryptedChunks.push(block);
     }
-    callback();
+
+    offset += chunkSize;
+    chunkIndex++;
   }
 
-  _flush(callback) {
-    // Teruskan sisa byte di akhir lagu (jika < 2048 bytes) tanpa didekripsi
-    if (this.buffer.length > 0) {
-      this.push(this.buffer);
-    }
-    callback();
-  }
+  return Buffer.concat(decryptedChunks);
 }
 
 // Search Endpoint
@@ -121,7 +105,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // Step 1: User Data & License Token
+    // Step 1: Ambil User Data & License Token
     const userRes = await axios.post(
       'https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&api_version=1.0&api_token=',
       {},
@@ -152,7 +136,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'Track token lagu tidak ditemukan' });
     }
 
-    // Step 3: Stream CDN URL dari media.deezer.com
+    // Step 3: Minta Signed CDN URL dari media.deezer.com
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -161,9 +145,7 @@ app.get('/api/deezer-stream', async (req, res) => {
         media: [
           {
             type: "FULL",
-            formats: [
-              { cipher: "BF_CBC_STRIPE", format: "MP3_128" }
-            ]
+            formats: [{ cipher: "BF_CBC_STRIPE", format: "MP3_128" }]
           }
         ]
       },
@@ -175,34 +157,26 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[DEEZER STREAM TRANSFORM ACTIVE] Track ID: ${realSngId}`);
+    console.log(`[DEEZER IN-MEMORY BUFFER DECRYPTION]: Track ID ${realSngId}`);
 
+    // Step 4: Unduh seluruh file audio ke memori Railway (~3MB / ~0.2 detik)
+    const audioDownload = await axios.get(audioUrl, { responseType: 'arraybuffer' });
+    const rawBuffer = Buffer.from(audioDownload.data);
+
+    // Step 5: Dekripsi seluruh buffer audio secara utuh di memori
     const bfKey = getBlowfishKey(realSngId);
+    const decryptedBuffer = decryptEntireAudioBuffer(rawBuffer, bfKey);
 
-    // Step 4: Stream Audio dari CDN via Transform Stream
-    const cdnResponse = await axios({
-      method: 'get',
-      url: audioUrl,
-      responseType: 'stream'
-    });
-
+    // Step 6: Kirimkan file MP3 bersih & utuh ke Flutter
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Accept-Ranges', 'none');
+    res.setHeader('Content-Length', decryptedBuffer.length);
+    res.setHeader('Accept-Ranges', 'bytes');
 
-    // Buat instance decryptor baru untuk tiap request
-    const decryptor = new DeezerDecryptor(bfKey);
-
-    req.on('close', () => {
-      cdnResponse.data.destroy();
-      decryptor.destroy();
-    });
-
-    // Pipelining otomatis: CDN -> Decryptor (2048-bytes chunking) -> Express Response
-    cdnResponse.data.pipe(decryptor).pipe(res);
+    return res.send(decryptedBuffer);
 
   } catch (err) {
-    console.error('Deezer stream error:', err.response?.status || err.message);
-    res.status(err.response?.status || 500).json({ error: 'Gagal melakukan streaming lagu Deezer' });
+    console.error('Deezer stream error:', err.message);
+    res.status(500).json({ error: 'Gagal melakukan streaming lagu Deezer' });
   }
 });
 
