@@ -31,21 +31,21 @@ app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
-// Endpoint untuk mencari lagu/video
-// Endpoint untuk mencari lagu/video (Versi Ringan & Cepat)
+// Endpoint Search dengan kategori (Song/Video) dan Thumbnail yang aman
 app.get('/api/search', (req, res) => {
   const searchQuery = req.query.q;
   if (!searchQuery) {
     return res.status(400).json({ error: 'Parameter query q dibutuhkan' });
   }
 
+  // Format print: id || title || uploader || thumbnail || duration
   const ytSearch = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--dump-json',
-    '--default-search', 'ytsearch10',
-    searchQuery
+    '--print', '%(id)s||%(title)s||%(uploader)s||%(thumbnail)s||%(duration)s',
+    '--flat-playlist',
+    'ytsearch15:' + searchQuery
   ]);
 
   let dataBuffer = '';
@@ -55,7 +55,7 @@ app.get('/api/search', (req, res) => {
   });
 
   ytSearch.stderr.on('data', (data) => {
-    // Abaikan error kecil
+    // Abaikan log error minor
   });
 
   ytSearch.on('close', (code) => {
@@ -66,18 +66,32 @@ app.get('/api/search', (req, res) => {
     try {
       const lines = dataBuffer.trim().split('\n').filter(line => line.length > 0);
       const results = lines.map(line => {
-        try {
-          const item = JSON.parse(line);
-          return {
-            id: item.id || '',
-            title: item.title || 'Tanpa Judul',
-            artist: item.uploader || item.channel || 'Artis Tidak Diketahui',
-            thumbnail: item.thumbnail || (item.thumbnails && item.thumbnails.length > 0 ? item.thumbnails[0].url : ''),
-          };
-        } catch (e) {
-          return null;
+        const parts = line.split('||');
+        if (parts.length >= 4) {
+          const id = parts[0] !== 'NA' ? parts[0] : '';
+          const title = parts[1] !== 'NA' ? parts[1] : 'Tanpa Judul';
+          const artist = parts[2] !== 'NA' ? parts[2] : 'Artis Tidak Diketahui';
+          const thumbnail = parts[3] !== 'NA' ? parts[3] : '';
+          const duration = parts[4] !== 'NA' ? parseFloat(parts[4]) : 0;
+
+          // Menentukan tipe otomatis berdasarkan durasi (misal: di bawah 10 menit dikategorikan 'Song', sisanya 'Video/Playlist')
+          let type = 'Song';
+          if (duration > 600 || duration === 0) {
+            type = 'Video';
+          }
+
+          if (id) {
+            return {
+              id: id,
+              title: title,
+              artist: artist,
+              thumbnail: thumbnail,
+              type: type, // Menambahkan informasi jenis konten (Song / Video)
+            };
+          }
         }
-      }).filter(item => item !== null && item.id !== '');
+        return null;
+      }).filter(item => item !== null);
 
       res.status(200).json(results);
     } catch (e) {
@@ -99,7 +113,6 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Set header untuk streaming audio
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
