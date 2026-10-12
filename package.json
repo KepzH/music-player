@@ -10,7 +10,7 @@
     "axios": "^1.20.0",
     "cors": "^2.8.6",
     "deezer-sdk": "^1.10.0",
-    "blowfish-node": "^2.1.2",
+    "blowfish-node": "*",
     "express": "^5.3.0",
     "ffmpeg-static": "^5.3.0",
     "fluent-ffmpeg": "^2.1.3"
