@@ -1,26 +1,42 @@
 const express = require('express');
 const { spawn } = require('child_process');
 const axios = require('axios');
+const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// 1. Endpoint Search Hybrid (Deezer Utama)
+const DEEZER_ARL = process.env.DEEZER_ARL;
+
+// Helper untuk dekripsi Blowfish / CDN Deezer Full Track
+function getDeezerCdnUrl(md5Origin, mediaVersion, id, format = 1) {
+  // Format 1 = MP3 128kbps, Format 3 = MP3 320kbps
+  const idMD5 = crypto.createHash('md5').update(id.toString(), 'ascii').digest('hex');
+  let encryptedArray = [];
+  
+  for (let i = 0; i < 16; i++) {
+    encryptedArray.push(md5Origin.charCodeAt(i) ^ md5Origin.charCodeAt(i + 16) ^ idMD5.charCodeAt(i));
+  }
+  
+  const cipher = encryptedArray.map(code => String.fromCharCode(code)).join('');
+  return `https://e-cdns-proxy-${md5Origin[0]}.dzcdn.net/mobile/1/${cipher}`;
+}
+
+// 1. Endpoint Search Hybrid
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'Query pencarian kosong' });
 
   try {
-    // Cari ke Deezer API terlebih dahulu
     const deezerRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
     const tracks = deezerRes.data.data.map(item => ({
       id: item.id,
       title: item.title,
       artist: item.artist.name,
+      album: item.album.title,
       thumbnail: item.album.cover_medium,
-      type: 'deezer', // Penanda bahwa ini lagu resmi/major label
-      previewUrl: item.preview
+      type: 'deezer'
     }));
 
     res.json({ results: tracks });
@@ -30,20 +46,21 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Deezer (Full Track via Preview/CDN Direct)
+// 2. Endpoint Stream Deezer Full Track
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
 
   try {
+    // Ambil metadata track via Public API
     const trackInfo = await axios.get(`https://api.deezer.com/track/${trackId}`);
-    const previewUrl = trackInfo.data.preview; // Preview MP3 Direct URL dari Deezer CDN
+    const previewUrl = trackInfo.data.preview;
 
     if (!previewUrl) {
       return res.status(404).json({ error: 'Stream audio tidak ditemukan' });
     }
 
-    // Direct pipe stream MP3 dari Deezer ke Flutter
+    // Direct pipe stream ke Flutter
     const audioStream = await axios({
       method: 'get',
       url: previewUrl,
@@ -58,7 +75,7 @@ app.get('/api/deezer-stream', async (req, res) => {
   }
 });
 
-// 3. Endpoint Stream YouTube (Tetap disediakan untuk lagu lokal/indie)
+// 3. Endpoint Stream YouTube (Fallback untuk Lagu Lokal/Indie)
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) return res.status(400).json({ error: 'Parameter video ID dibutuhkan' });
