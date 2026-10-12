@@ -10,7 +10,7 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Middleware CORS
+// Middleware CORS untuk Flutter (Mobile, Web, Desktop)
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -21,7 +21,7 @@ app.use((req, res, next) => {
 
 const DEEZER_ARL = (process.env.deezer_cookies || process.env.DEEZER_ARL || '').trim();
 
-// Cache folder sementara di Railway
+// Disk Cache sementara di Railway
 const CACHE_DIR = path.join('/tmp', 'deezer_cache');
 if (!fs.existsSync(CACHE_DIR)) {
   fs.mkdirSync(CACHE_DIR, { recursive: true });
@@ -40,20 +40,20 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block 2048 Bytes Menggunakan Pure JS Blowfish CBC
+// 2. Dekripsi Block 2048 Bytes dengan Pure JS & PADDING.NONE
 function decryptBlowfishBlockPureJS(chunk, key) {
   try {
-    const bf = new Blowfish(key, Blowfish.MODE.CBC, Blowfish.PADDING.PKCS5);
+    // PADDING.NONE wajib digunakan agar tidak ada byte 2048 yang terpotong
+    const bf = new Blowfish(key, Blowfish.MODE.CBC, Blowfish.PADDING.NONE);
     bf.setIv(Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
     
-    // Dekripsi 2048 bytes secara presisi tanpa OpenSSL native
     return Buffer.from(bf.decode(chunk, Blowfish.TYPE.UINT8_ARRAY));
   } catch (err) {
     return chunk;
   }
 }
 
-// 3. Dekripsi Utuh File Audio
+// 3. Dekripsi Seluruh Buffer Audio dari Byte 0
 function decryptAudioBuffer(rawBuffer, bfKey) {
   const decryptedChunks = [];
   let offset = 0;
@@ -63,6 +63,7 @@ function decryptAudioBuffer(rawBuffer, bfKey) {
     const blockSize = Math.min(2048, rawBuffer.length - offset);
     const block = rawBuffer.subarray(offset, offset + blockSize);
 
+    // Hanya blok ke-0, 3, 6, 9... (berukuran 2048) yang didekripsi
     if (chunkIndex % 3 === 0 && blockSize === 2048) {
       decryptedChunks.push(decryptBlowfishBlockPureJS(block, bfKey));
     } else {
@@ -111,6 +112,7 @@ app.get('/api/deezer-stream', async (req, res) => {
   const cachedFilePath = path.join(CACHE_DIR, `${trackId}.mp3`);
 
   try {
+    // Jika file sudah ada di disk cache, langsung kirim ke player
     if (fs.existsSync(cachedFilePath)) {
       console.log(`[CACHE HIT]: Serving ${trackId}.mp3`);
       return res.sendFile(cachedFilePath, {
@@ -126,7 +128,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // Step 1: User Data & License Token
+    // Step 1: Get User Data & License Token
     const userRes = await axios.post(
       'https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&api_version=1.0&api_token=',
       {},
@@ -142,7 +144,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(401).json({ error: 'ARL Cookie kedaluwarsa atau tidak valid' });
     }
 
-    // Step 2: Song Data & REAL SNG_ID
+    // Step 2: Get Song Data & Real SNG_ID
     const songRes = await axios.post(
       `https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=${apiToken}`,
       { sng_id: trackId },
@@ -157,7 +159,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'Track token lagu tidak ditemukan' });
     }
 
-    // Step 3: Stream CDN URL
+    // Step 3: Get Stream CDN URL
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -178,20 +180,21 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[PURE JS DECRYPT START] Track ID: ${realSngId}`);
+    console.log(`[PURE JS DECRYPT START]: Real SNG_ID ${realSngId}`);
 
-    // Step 4: Download buffer audio utuh
+    // Step 4: Download buffer audio mentah utuh (~3 MB / ~0.3s)
     const audioDownload = await axios.get(audioUrl, { responseType: 'arraybuffer' });
     const rawBuffer = Buffer.from(audioDownload.data);
 
-    // Step 5: Dekripsi Blowfish dengan Pure JS
+    // Step 5: Dekripsi Blowfish dengan Pure JS (PADDING.NONE)
     const bfKey = getBlowfishKey(realSngId);
     const decryptedBuffer = decryptAudioBuffer(rawBuffer, bfKey);
 
-    // Simpan ke disk cache sementara
+    // Simpan file MP3 bersih ke disk cache
     fs.writeFileSync(cachedFilePath, decryptedBuffer);
+    console.log(`[CACHE SAVED]: ${cachedFilePath}`);
 
-    // Step 6: Kirim via sendFile
+    // Step 6: Kirim via sendFile (Otomatis handle Range Requests & Seeking)
     return res.sendFile(cachedFilePath, {
       headers: {
         'Content-Type': 'audio/mpeg',
