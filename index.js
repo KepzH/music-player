@@ -37,7 +37,7 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block Blowfish CBC (2048 Bytes)
+// 2. Dekripsi Block Blowfish CBC
 function decryptBlowfishBlock(chunk, key) {
   const iv = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
   const decipher = crypto.createDecipheriv('bf-cbc', key, iv);
@@ -45,8 +45,19 @@ function decryptBlowfishBlock(chunk, key) {
   return Buffer.concat([decipher.update(chunk), decipher.final()]);
 }
 
-// 3. Dekripsi Buffer Audio Utuh
-function decryptAudioBuffer(rawBuffer, bfKey) {
+// 3. Dekripsi Buffer Audio dengan Auto-Detect Header ID3/MP3
+function processAndDecryptAudio(rawBuffer, bfKey) {
+  // Cek apakah file diawali ID3 (0x49 0x44 0x33) atau MP3 Sync (0xFF)
+  const isAlreadyCleanMP3 = 
+    (rawBuffer[0] === 0x49 && rawBuffer[1] === 0x44 && rawBuffer[2] === 0x33) ||
+    (rawBuffer[0] === 0xFF && (rawBuffer[1] & 0xE0) === 0xE0);
+
+  if (isAlreadyCleanMP3) {
+    console.log('[AUTO-DETECT]: File dari CDN ternyata SUDAH BERSIH (Unencrypted MP3). Bypassing decryption!');
+    return rawBuffer;
+  }
+
+  console.log('[AUTO-DETECT]: File terenkripsi Deezer (BF_CBC_STRIPE). Memulai dekripsi...');
   const decryptedChunks = [];
   let offset = 0;
   let chunkIndex = 0;
@@ -59,7 +70,7 @@ function decryptAudioBuffer(rawBuffer, bfKey) {
       try {
         decryptedChunks.push(decryptBlowfishBlock(block, bfKey));
       } catch (err) {
-        console.error(`[DECRYPT ERROR at chunk ${chunkIndex}]:`, err.message);
+        console.error(`[DECRYPT FAIL at chunk ${chunkIndex}]:`, err.message);
         decryptedChunks.push(block);
       }
     } else {
@@ -170,16 +181,18 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[DECRYPT START] SNG_ID: ${realSngId}`);
+    console.log(`[FETCHING CDN]: ${audioUrl}`);
 
     const audioDownload = await axios.get(audioUrl, { responseType: 'arraybuffer' });
     const rawBuffer = Buffer.from(audioDownload.data);
 
     const bfKey = getBlowfishKey(realSngId);
-    const decryptedBuffer = decryptAudioBuffer(rawBuffer, bfKey);
+    
+    // Auto-Detect & Processing
+    const finalBuffer = processAndDecryptAudio(rawBuffer, bfKey);
 
-    fs.writeFileSync(cachedFilePath, decryptedBuffer);
-    console.log(`[DECRYPT SUCCESS]: Saved ${cachedFilePath}`);
+    fs.writeFileSync(cachedFilePath, finalBuffer);
+    console.log(`[SAVED TO CACHE]: ${cachedFilePath}`);
 
     return res.sendFile(cachedFilePath, {
       headers: {
@@ -197,3 +210,4 @@ app.get('/api/deezer-stream', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server SpotiFLAC running on port ${PORT}`);
 });
+
