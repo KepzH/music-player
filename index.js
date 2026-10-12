@@ -5,20 +5,7 @@ const { exec } = require('child_process');
 const app = express();
 
 if (process.env.YOUTUBE_COOKIES) {
-  // Hanya ambil baris komentar atau yang murni domain youtube.com
-  const cleanCookies = process.env.YOUTUBE_COOKIES
-    .split('\n')
-    .filter(line => {
-      const trimmed = line.trim();
-      // Pertahankan header komentar Netscape
-      if (trimmed.startsWith('#')) return true;
-      // Hanya ambil baris yang mengandung youtube.com (abaikan google.com / accounts.google.com yang bikin error)
-      if (trimmed.includes('youtube.com')) return true;
-      return false;
-    })
-    .join('\n');
-
-  fs.writeFileSync('./cookies.txt', cleanCookies);
+  fs.writeFileSync('./cookies.json', process.env.YOUTUBE_COOKIES);
 }
 
 // Endpoint untuk tes server
