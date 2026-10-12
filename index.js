@@ -3,6 +3,15 @@ const cors = require('cors');
 const fs = require('fs');
 const { exec } = require('child_process');
 const app = express();
+const { execSync } = require('child_process');
+
+// Memaksa yt-dlp update ke versi terbaru saat server booting untuk bypass signature challenge
+try {
+  console.log("Memperbarui yt-dlp ke versi terbaru...");
+  execSync('yt-dlp -U');
+} catch (err) {
+  console.log("Gagal auto-update yt-dlp, menggunakan versi bawaan.");
+}
 
 if (process.env.YOUTUBE_COOKIES) {
   fs.writeFileSync('./cookies.json', process.env.YOUTUBE_COOKIES);
