@@ -4,15 +4,10 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\""
+    "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\" && curl -fsSL https://deno.land/install.sh | sh"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
     "cors": "^2.8.6",
-    "express": "^5.3.0",
-    "yt-dlp-exec": "^1.0.2"
+    "express": "^5.3.0"
   }
 }
