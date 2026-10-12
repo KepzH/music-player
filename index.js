@@ -41,7 +41,7 @@ app.get('/api/stream', (req, res) => {
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
   // Menggunakan Deno runtime + cookies + klien tv/ios untuk menghindari eksperimen SABR-only
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github --extractor-args "youtube:player_client=tv,ios" -g -f "bestaudio" "${youtubeUrl}"`;
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github --extractor-args "youtube:player_client=tv" -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
