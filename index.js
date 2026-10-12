@@ -41,6 +41,21 @@ function getCdnUrl(md5Origin, mediaVersion, trackId, format = 1) {
   return `https://e-cdns-stream-${magicChar}.dzcdn.net/mobile/1/${path}`;
 }
 
+// Function pembuat daftar kandidat URL CDN Deezer yang valid
+function getCdnUrls(md5Origin, mediaVersion, trackId, format = 1) {
+  const magicChar = md5Origin[0];
+  const step1 = `${md5Origin}¤${format}¤${trackId}¤${mediaVersion}`;
+  const md5Step1 = crypto.createHash('md5').update(step1, 'ascii').digest('hex');
+  const path = `${md5Origin[0]}/${md5Origin[1]}/${md5Origin[2]}/${md5Step1}_${format}.mp3`;
+
+  // Daftar host CDN aktif Deezer
+  return [
+    `https://cdns-stream-${magicChar}.dzcdn.net/mobile/1/${path}`,
+    `https://cdns-proxy-${magicChar}.dzcdn.net/mobile/1/${path}`,
+    `https://e-cdn-proxy-${magicChar}.dzcdn.net/mobile/1/${path}`
+  ];
+}
+
 // Endpoint Search
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
@@ -122,19 +137,34 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'Metadata lagu tidak ditemukan di Deezer' });
     }
 
-    // Step 3: Buat Direct CDN Stream URL secara lokal
-    const audioUrl = getCdnUrl(trackData.MD5_ORIGIN, trackData.MEDIA_VERSION, trackId, 1);
+    // Step 3: Dapatkan kandidat URL CDN
+    const cdnUrls = getCdnUrls(trackData.MD5_ORIGIN, trackData.MEDIA_VERSION, trackId, 1);
     const bfKey = getBlowfishKey(trackId);
 
-    console.log(`[STREAMING URL GENERATED]: ${audioUrl}`);
+    // Step 4: Coba stream dari kandidat URL CDN secara berurutan
+    let response = null;
+    let activeUrl = '';
 
-    // Step 4: Stream Data Audio & Dekripsi Realtime ke Flutter
-    const response = await axios({
-      method: 'get',
-      url: audioUrl,
-      responseType: 'stream'
-    });
+    for (const url of cdnUrls) {
+      try {
+        console.log(`[TRYING CDN URL]: ${url}`);
+        response = await axios({
+          method: 'get',
+          url: url,
+          responseType: 'stream'
+        });
+        activeUrl = url;
+        break; // Berhasil terhubung ke CDN
+      } catch (err) {
+        console.warn(`[CDN FAILED ${url}]:`, err.message);
+      }
+    }
 
+    if (!response) {
+      return res.status(502).json({ error: 'Semua server CDN Deezer tidak dapat dijangkau' });
+    }
+
+    console.log(`[SUCCESSFULLY STREAMING FROM]: ${activeUrl}`);
     res.setHeader('Content-Type', 'audio/mpeg');
 
     let chunkBuffer = Buffer.alloc(0);
@@ -163,6 +193,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       }
       res.end();
     });
+
 
   } catch (err) {
     console.error('Deezer stream error:', err.message);
