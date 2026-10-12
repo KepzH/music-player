@@ -116,13 +116,13 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggunakan player-client Android untuk bypass proteksi SABR-only streaming
+  // Menggunakan player-client android dengan format terbaik yang tersedia
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
     '--extractor-args', 'youtube:player-client=android',
-    '-f', 'bestaudio/best',
+    '-f', 'bestaudio',
     '-o', '-',
     youtubeUrl
   ]);
@@ -131,7 +131,7 @@ app.get('/api/stream', (req, res) => {
 
   ytProcess.stderr.on('data', (data) => {
     const logStr = data.toString();
-    if (logStr.includes('ERROR')) {
+    if (logStr.includes('ERROR') || logStr.includes('WARNING')) {
       console.error(`yt-dlp log: ${logStr}`);
     }
   });
