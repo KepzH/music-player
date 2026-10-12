@@ -3,11 +3,8 @@
   "version": "1.0.0",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "scripts": {
-  "start": "node index.js",
-  "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\""
+    "start": "node index.js",
+    "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\""
   },
   "keywords": [],
   "author": "",
