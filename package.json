@@ -7,7 +7,9 @@
     "postinstall": "apt-get update && apt-get install -y unzip ffmpeg && pip install --upgrade --break-system-packages \"yt-dlp[default]\" && curl -fsSL https://deno.land/install.sh | sh"
   },
   "dependencies": {
+    "axios": "^1.20.0",
     "cors": "^2.8.6",
+    "deezer-sdk": "^1.10.0",
     "express": "^5.3.0"
   }
 }
