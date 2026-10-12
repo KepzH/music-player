@@ -116,12 +116,12 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggunakan extractor-args untuk bypass pembatasan format web client yang terkena SABR
+  // Menggunakan player-client mweb (Mobile Web) yang mendukung cookies dan aman dari SABR
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--extractor-args', 'youtube:player-client=ios,web',
+    '--extractor-args', 'youtube:player-client=mweb',
     '-f', 'bestaudio/best',
     '-o', '-',
     youtubeUrl
