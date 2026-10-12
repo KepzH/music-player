@@ -4,7 +4,7 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
-    "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\" && curl -fsSL https://deno.land/install.sh | sh"
+    "postinstall": "pip install --upgrade --break-system-packages \"yt-dlp[default]\""
   },
   "dependencies": {
     "cors": "^2.8.6",
