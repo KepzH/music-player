@@ -1,20 +1,24 @@
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const app = express();
-const { execSync } = require('child_process');
 
-// Memaksa yt-dlp update ke versi terbaru saat server booting untuk bypass signature challenge
+app.use(cors());
+app.use(express.json());
+
+// Memaksa yt-dlp update ke versi terbaru & pastikan dependensi EJS terpasang
 try {
   console.log("Memperbarui yt-dlp ke versi terbaru...");
+  execSync('pip install --upgrade --break-system-packages "yt-dlp[default]"');
   execSync('yt-dlp -U');
 } catch (err) {
-  console.log("Gagal auto-update yt-dlp, menggunakan versi bawaan.");
+  console.log("Catatan update yt-dlp:", err.message);
 }
 
+// Menulis cookies ke cookies.txt agar sinkron dengan argumen --cookies cookies.txt
 if (process.env.YOUTUBE_COOKIES) {
-  fs.writeFileSync('./cookies.json', process.env.YOUTUBE_COOKIES);
+  fs.writeFileSync('./cookies.txt', process.env.YOUTUBE_COOKIES);
 }
 
 // Endpoint untuk tes server
@@ -33,8 +37,8 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Menggunakan konfigurasi standar yang lebih tahan banting di server cloud
-const command = `yt-dlp --cookies cookies.txt --js-runtimes node --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
+  // Perintah yt-dlp lengkap dengan argumen bypass signature & runtime Node.js
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes node --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
