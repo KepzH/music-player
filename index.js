@@ -109,27 +109,43 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'Track token tidak ditemukan dari Deezer' });
     }
 
-    // Step 3: Dapatkan Link Direct CDN
-    const mediaRes = await axios.post(
-      'https://media.deezer.com/v1/get_url',
-      {
-        license_token: trackData.TRACK_TOKEN,
-        media: [
-          {
-            type: 'FULL',
-            formats: [{ cipher: 'BF_CBC_STRIPE', format: 'MP3_128' }]
-          }
-        ]
-      },
-      { headers: baseHeaders }
-    );
+// Step 3: Dapatkan Link Direct CDN
+    let audioUrl = null;
 
-    const sources = mediaRes.data?.data?.[0]?.media?.[0]?.sources;
-    if (!sources || sources.length === 0) {
-      return res.status(404).json({ error: 'URL stream tidak tersedia' });
+    try {
+      const mediaRes = await axios.post(
+        'https://media.deezer.com/v1/get_url',
+        {
+          license_token: trackData.TRACK_TOKEN,
+          media: [
+            {
+              type: "FULL",
+              formats: [{ cipher: "BF_CBC_STRIPE", format: "MP3_128" }]
+            }
+          ]
+        },
+        { headers: baseHeaders }
+      );
+
+      audioUrl = mediaRes.data?.data?.[0]?.media?.[0]?.sources?.[0]?.url;
+    } catch (mediaErr) {
+      console.warn('media.deezer.com error (422/fallback):', mediaErr.response?.data || mediaErr.message);
     }
 
-    const audioUrl = sources[0].url;
+    // Fallback jika get_url gagal (422)
+    if (!audioUrl) {
+      // Ambil direct media URL alternatif jika disediakan oleh trackData
+      if (trackData.FILESIZE_MP3_128 || trackData.TRACK_TOKEN) {
+        // Ambil URL CDN publik direct
+        const trackFormat = trackData.FILESIZE_MP3_320 ? '3' : '1';
+        audioUrl = `https://e-cdns-proxy-${trackData.MD5_ORIGIN[0]}.dzcdn.net/mobile/1/${trackData.MD5_ORIGIN}`;
+      }
+    }
+
+    if (!audioUrl) {
+      return res.status(404).json({ error: 'URL audio tidak dapat dijangkau dari Deezer' });
+    }
+
     const bfKey = getBlowfishKey(trackId);
 
     // Step 4: Stream & Dekripsi Realtime ke Flutter
