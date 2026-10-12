@@ -116,6 +116,7 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
+  // Konfigurasi standar paling stabil yang dulu dipakai
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
