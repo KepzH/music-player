@@ -16,7 +16,7 @@ function decryptBlowfishBlock(chunk, key) {
 }
 
 function getBlowfishKey(trackId) {
-  const SECRET = 'g42fks physical'; // Key rahasia standar Deezer
+  const SECRET = 'g42fks physical';
   const md5Id = crypto.createHash('md5').update(trackId.toString(), 'ascii').digest('hex');
   
   let key = '';
@@ -52,30 +52,46 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Deezer Full Track (Direct Decrypted Stream)
+// 2. Endpoint Stream Deezer Full Track
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
 
   try {
-    // Ambil info track & token via GW API Deezer
-    const gwRes = await axios.post(
-      'https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=',
-      { sng_id: trackId },
-      {
-        headers: {
-          'Cookie': `arl=${DEEZER_ARL}`,
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
-        }
-      }
+    const cookieHeader = `arl=${DEEZER_ARL.trim()}`;
+    const headers = {
+      'Cookie': cookieHeader,
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Content-Type': 'application/json'
+    };
+
+    // Step 1: Ambil User Data & Session API Token menggunakan ARL
+    const userRes = await axios.post(
+      'https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&api_version=1.0&api_token=',
+      {},
+      { headers }
     );
 
-    const trackData = gwRes.data.results;
-    if (!trackData || !trackData.TRACK_TOKEN) {
-      return res.status(404).json({ error: 'Track token tidak ditemukan' });
+    const apiToken = userRes.data?.results?.checkForm;
+    if (!apiToken) {
+      console.error('Sesi ARL tidak valid / kedaluwarsa.');
+      return res.status(401).json({ error: 'ARL Cookie tidak valid atau kedaluwarsa' });
     }
 
-    // Dapatkan URL CDN Stream Asli
+    // Step 2: Minta Track Data & TRACK_TOKEN menggunakan api_token sesi
+    const trackGwRes = await axios.post(
+      `https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=${apiToken}`,
+      { sng_id: trackId },
+      { headers }
+    );
+
+    const trackData = trackGwRes.data?.results;
+    if (!trackData || !trackData.TRACK_TOKEN) {
+      console.error('Gagal mendapatkan TRACK_TOKEN:', trackGwRes.data);
+      return res.status(404).json({ error: 'Track token tidak ditemukan dari Deezer' });
+    }
+
+    // Step 3: Minta Stream Source CDN
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -86,18 +102,19 @@ app.get('/api/deezer-stream', async (req, res) => {
             formats: [{ cipher: 'BF_CBC_STRIPE', format: 'MP3_128' }]
           }
         ]
-      }
+      },
+      { headers: { 'Content-Type': 'application/json' } }
     );
 
-    const sources = mediaRes.data.data?.[0]?.media?.[0]?.sources;
+    const sources = mediaRes.data?.data?.[0]?.media?.[0]?.sources;
     if (!sources || sources.length === 0) {
-      return res.status(404).json({ error: 'URL audio full track tidak tersedia' });
+      return res.status(404).json({ error: 'URL stream tidak tersedia' });
     }
 
     const audioUrl = sources[0].url;
     const bfKey = getBlowfishKey(trackId);
 
-    // Stream & Dekripsi Chunk Audio Deezer secara Realtime
+    // Step 4: Stream & Dekripsi Chunk Audio secara Realtime
     const response = await axios({
       method: 'get',
       url: audioUrl,
@@ -112,7 +129,6 @@ app.get('/api/deezer-stream', async (req, res) => {
     response.data.on('data', (data) => {
       chunkBuffer = Buffer.concat([chunkBuffer, data]);
 
-      // Deezer mengenkripsi tiap blok 2048 bytes (tiap blok ke-3)
       while (chunkBuffer.length >= 2048) {
         const block = chunkBuffer.slice(0, 2048);
         chunkBuffer = chunkBuffer.slice(2048);
@@ -136,10 +152,10 @@ app.get('/api/deezer-stream', async (req, res) => {
 
   } catch (err) {
     console.error('Deezer full stream error:', err.message);
-    res.status(500).json({ error: 'Gagal mendekripsi lagu Deezer' });
+    res.status(500).json({ error: 'Gagal memproses lagu Deezer' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Server SpotiFLAC (Deezer Full Track Mode) running on port ${PORT}`);
+  console.log(`Server SpotiFLAC running on port ${PORT}`);
 });
