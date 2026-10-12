@@ -6,21 +6,18 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Ambil Cookie ARL dari Environment Variable Railway
 const DEEZER_ARL = (process.env.deezer_cookies || process.env.DEEZER_ARL || '').trim();
 
-// 1. Generate Blowfish Key dari Track ID (Kunci Dekripsi Deezer)
+// 1. Fix Blowfish Key Generator (Menggunakan Buffer Biner Murni)
 function getBlowfishKey(trackId) {
   const SECRET = 'g42fks physical';
   const md5Id = crypto.createHash('md5').update(trackId.toString(), 'ascii').digest('hex');
   
-  let key = '';
+  const bfKey = Buffer.alloc(16);
   for (let i = 0; i < 16; i++) {
-    key += String.fromCharCode(
-      md5Id.charCodeAt(i) ^ md5Id.charCodeAt(i + 16) ^ SECRET.charCodeAt(i)
-    );
+    bfKey[i] = md5Id.charCodeAt(i) ^ md5Id.charCodeAt(i + 16) ^ SECRET.charCodeAt(i);
   }
-  return Buffer.from(key, 'ascii');
+  return bfKey;
 }
 
 // 2. Dekripsi Block Blowfish CBC
@@ -30,7 +27,7 @@ function decryptBlowfishBlock(chunk, key) {
   return Buffer.concat([cipher.update(chunk), cipher.final()]);
 }
 
-// 3. Endpoint Search Lagu
+// Search Endpoint
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'Query pencarian kosong' });
@@ -53,7 +50,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// 4. Endpoint Stream Deezer Full Track (Fix 422 & Signed CDN)
+// Stream Endpoint
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
@@ -68,49 +65,36 @@ app.get('/api/deezer-stream', async (req, res) => {
       'Content-Type': 'application/json'
     };
 
-    // Step 1: Ambil Session API Token & License Token via getUserData
+    // Step 1: Ambil User Data & License Token
     const userRes = await axios.post(
       'https://www.deezer.com/ajax/gw-light.php?method=deezer.getUserData&api_version=1.0&api_token=',
       {},
-      {
-        headers: {
-          ...baseHeaders,
-          'Cookie': `arl=${DEEZER_ARL}`
-        }
-      }
+      { headers: { ...baseHeaders, 'Cookie': `arl=${DEEZER_ARL}` } }
     );
 
     const apiToken = userRes.data?.results?.checkForm;
-    // Ambil License Token wajib dari akun Deezer
     const licenseToken = userRes.data?.results?.USER?.OPTIONS?.license_token || userRes.data?.results?.LICENCE_TOKEN;
-
     const setCookieHeaders = userRes.headers['set-cookie'] || [];
     const combinedCookies = [`arl=${DEEZER_ARL}`, ...setCookieHeaders].join('; ');
 
     if (!apiToken || !licenseToken) {
-      console.error('ARL Cookie kedaluwarsa atau license_token tidak ditemukan:', userRes.data);
-      return res.status(401).json({ error: 'ARL Cookie kedaluwarsa/tidak valid. Silakan ganti ARL baru di Railway.' });
+      return res.status(401).json({ error: 'ARL Cookie kedaluwarsa atau tidak valid' });
     }
 
-    // Step 2: Ambil TRACK_TOKEN lagu via song.getData
+    // Step 2: Ambil TRACK_TOKEN
     const songRes = await axios.post(
       `https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=${apiToken}`,
       { sng_id: trackId },
-      {
-        headers: {
-          ...baseHeaders,
-          'Cookie': combinedCookies
-        }
-      }
+      { headers: { ...baseHeaders, 'Cookie': combinedCookies } }
     );
 
+    const realTrackId = songRes.data?.results?.SNG_ID || trackId;
     const trackToken = songRes.data?.results?.TRACK_TOKEN;
     if (!trackToken) {
-      console.error('TRACK_TOKEN tidak ditemukan:', songRes.data);
       return res.status(404).json({ error: 'Track token lagu tidak ditemukan' });
     }
 
-    // Step 3: Minta Signed CDN URL dari media.deezer.com (Sertakan license_token & track_tokens)
+    // Step 3: Ambil Direct Stream CDN URL
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -119,35 +103,34 @@ app.get('/api/deezer-stream', async (req, res) => {
         media: [
           {
             type: "FULL",
-            formats: [
-              { cipher: "BF_CBC_STRIPE", format: "MP3_128" },
-              { cipher: "BF_CBC_STRIPE", format: "MP3_320" }
-            ]
+            formats: [{ cipher: "BF_CBC_STRIPE", format: "MP3_128" }]
           }
         ]
       },
       { headers: baseHeaders }
     );
 
-    const sources = mediaRes.data?.data?.[0]?.media?.[0]?.sources;
-    if (!sources || sources.length === 0 || !sources[0].url) {
-      console.error('Response media.deezer.com kosong:', mediaRes.data);
+    const audioUrl = mediaRes.data?.data?.[0]?.media?.[0]?.sources?.[0]?.url;
+    if (!audioUrl) {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    const audioUrl = sources[0].url;
-    console.log(`[STREAM URL DIRECT FROM DEEZER]: ${audioUrl}`);
+    // Gunakan realTrackId untuk menghasilkan Kunci Blowfish Presisi
+    const bfKey = getBlowfishKey(realTrackId);
 
-    const bfKey = getBlowfishKey(trackId);
-
-    // Step 4: Stream Data Audio & Dekripsi Blowfish Realtime ke Flutter
+    // Step 4: Stream audio dari CDN
     const response = await axios({
       method: 'get',
       url: audioUrl,
       responseType: 'stream'
     });
 
+    // Set Header Streaming Lengkap untuk Flutter & Browser
     res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Accept-Ranges', 'none');
+    if (response.headers['content-length']) {
+      res.setHeader('Content-Length', response.headers['content-length']);
+    }
 
     let chunkBuffer = Buffer.alloc(0);
     let chunkIndex = 0;
@@ -159,7 +142,6 @@ app.get('/api/deezer-stream', async (req, res) => {
         const block = chunkBuffer.slice(0, 2048);
         chunkBuffer = chunkBuffer.slice(2048);
 
-        // Tiap block ke-3 dienkripsi Blowfish
         if (chunkIndex % 3 === 0 && block.length === 2048) {
           const decryptedBlock = decryptBlowfishBlock(block, bfKey);
           res.write(decryptedBlock);
@@ -178,7 +160,7 @@ app.get('/api/deezer-stream', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('Deezer stream error:', err.response?.data || err.message);
+    console.error('Deezer stream error:', err.message);
     res.status(500).json({ error: 'Gagal melakukan streaming lagu Deezer' });
   }
 });
