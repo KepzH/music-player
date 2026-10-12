@@ -116,11 +116,12 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggunakan konfigurasi murni dengan cookies Netscape yang sudah diperbarui tanpa client-args yang memaksa skip
+  // Menggunakan extractor-args untuk bypass pembatasan format web client yang terkena SABR
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
+    '--extractor-args', 'youtube:player-client=ios,web',
     '-f', 'bestaudio/best',
     '-o', '-',
     youtubeUrl
