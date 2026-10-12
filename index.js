@@ -2,12 +2,12 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const { exec, execSync } = require('child_process');
-const app = express();
 
+const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Memaksa yt-dlp update ke versi terbaru & pastikan dependensi EJS terpasang
+// 1. Memperbarui yt-dlp dan dependensi saat server booting di Railway
 try {
   console.log("Memperbarui yt-dlp ke versi terbaru...");
   execSync('pip install --upgrade --break-system-packages "yt-dlp[default]"');
@@ -16,29 +16,31 @@ try {
   console.log("Catatan update yt-dlp:", err.message);
 }
 
-// Menulis cookies ke cookies.txt agar sinkron dengan argumen --cookies cookies.txt
+// 2. Menulis cookies Netscape dari Environment Variable Railway dengan pembersihan format baris
 if (process.env.YOUTUBE_COOKIES) {
-  fs.writeFileSync('./cookies.txt', process.env.YOUTUBE_COOKIES);
+  const cleanCookies = process.env.YOUTUBE_COOKIES.replace(/\r\n/g, '\n').trim();
+  fs.writeFileSync('./cookies.txt', cleanCookies);
+  console.log("File cookies.txt berhasil disiapkan dan dibersihkan.");
 }
 
-// Endpoint untuk tes server
+// 3. Endpoint untuk pengecekan status server
 app.get('/', (req, res) => {
-  res.send({ status: 'active', message: 'SpotiFLAC Backend Running' });
+  res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
-// Endpoint untuk mengambil Stream URL via yt-dlp
+// 4. Endpoint utama untuk mengambil Stream URL YouTube via yt-dlp
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) {
     return res.status(400).json({ error: 'Parameter video ID dibutuhkan' });
   }
 
-  // Bersihkan ID jika ada karakter ekstra (seperti garis miring di akhir)
+  // Bersihkan ID dari karakter ekstra (misal garis miring)
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Perintah yt-dlp lengkap dengan argumen bypass signature & runtime Node.js
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes node --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
+  // Perintah yt-dlp menggunakan --js-runtimes deno sesuai environment Railway
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
@@ -51,7 +53,7 @@ app.get('/api/stream', (req, res) => {
       return res.status(500).json({ error: 'Stream URL kosong dari yt-dlp' });
     }
 
-    return res.json({
+    return res.status(200).json({
       status: 'success',
       id: cleanId,
       stream_url: streamUrl,
@@ -59,6 +61,7 @@ app.get('/api/stream', (req, res) => {
   });
 });
 
+// 5. Jalankan server pada port Railway atau port default 8080
 const PORT = process.env.PORT || 8080;
 app.listen(PORT, () => {
   console.log(`Server berjalan di port ${PORT}`);
