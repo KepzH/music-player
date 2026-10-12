@@ -116,13 +116,12 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggunakan player-client android dengan format terbaik yang tersedia
+  // Menggunakan konfigurasi murni dengan cookies Netscape yang sudah diperbarui tanpa client-args yang memaksa skip
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--extractor-args', 'youtube:player-client=android',
-    '-f', 'bestaudio',
+    '-f', 'bestaudio/best',
     '-o', '-',
     youtubeUrl
   ]);
