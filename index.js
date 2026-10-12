@@ -1,5 +1,4 @@
 const express = require('express');
-const { spawn } = require('child_process');
 const axios = require('axios');
 const crypto = require('crypto');
 const app = express();
@@ -9,21 +8,27 @@ app.use(express.json());
 
 const DEEZER_ARL = process.env.DEEZER_ARL;
 
-// Helper untuk dekripsi Blowfish / CDN Deezer Full Track
-function getDeezerCdnUrl(md5Origin, mediaVersion, id, format = 1) {
-  // Format 1 = MP3 128kbps, Format 3 = MP3 320kbps
-  const idMD5 = crypto.createHash('md5').update(id.toString(), 'ascii').digest('hex');
-  let encryptedArray = [];
-  
-  for (let i = 0; i < 16; i++) {
-    encryptedArray.push(md5Origin.charCodeAt(i) ^ md5Origin.charCodeAt(i + 16) ^ idMD5.charCodeAt(i));
-  }
-  
-  const cipher = encryptedArray.map(code => String.fromCharCode(code)).join('');
-  return `https://e-cdns-proxy-${md5Origin[0]}.dzcdn.net/mobile/1/${cipher}`;
+// Function untuk dekripsi Blowfish CBC chunk Deezer
+function decryptBlowfishBlock(chunk, key) {
+  const cipher = crypto.createDecipheriv('bf-cbc', key, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
+  cipher.setAutoPadding(false);
+  return Buffer.concat([cipher.update(chunk), cipher.final()]);
 }
 
-// 1. Endpoint Search Hybrid
+function getBlowfishKey(trackId) {
+  const SECRET = 'g42fks physical'; // Key rahasia standar Deezer
+  const md5Id = crypto.createHash('md5').update(trackId.toString(), 'ascii').digest('hex');
+  
+  let key = '';
+  for (let i = 0; i < 16; i++) {
+    key += String.fromCharCode(
+      md5Id.charCodeAt(i) ^ md5Id.charCodeAt(i + 16) ^ SECRET.charCodeAt(i)
+    );
+  }
+  return Buffer.from(key, 'ascii');
+}
+
+// 1. Endpoint Search
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'Query pencarian kosong' });
@@ -36,6 +41,7 @@ app.get('/api/search', async (req, res) => {
       artist: item.artist.name,
       album: item.album.title,
       thumbnail: item.album.cover_medium,
+      duration: item.duration,
       type: 'deezer'
     }));
 
@@ -46,65 +52,94 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// 2. Endpoint Stream Deezer Full Track
+// 2. Endpoint Stream Deezer Full Track (Direct Decrypted Stream)
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
 
   try {
-    // Ambil metadata track via Public API
-    const trackInfo = await axios.get(`https://api.deezer.com/track/${trackId}`);
-    const previewUrl = trackInfo.data.preview;
+    // Ambil info track & token via GW API Deezer
+    const gwRes = await axios.post(
+      'https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=',
+      { sng_id: trackId },
+      {
+        headers: {
+          'Cookie': `arl=${DEEZER_ARL}`,
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'
+        }
+      }
+    );
 
-    if (!previewUrl) {
-      return res.status(404).json({ error: 'Stream audio tidak ditemukan' });
+    const trackData = gwRes.data.results;
+    if (!trackData || !trackData.TRACK_TOKEN) {
+      return res.status(404).json({ error: 'Track token tidak ditemukan' });
     }
 
-    // Direct pipe stream ke Flutter
-    const audioStream = await axios({
+    // Dapatkan URL CDN Stream Asli
+    const mediaRes = await axios.post(
+      'https://media.deezer.com/v1/get_url',
+      {
+        license_token: trackData.TRACK_TOKEN,
+        media: [
+          {
+            type: 'FULL',
+            formats: [{ cipher: 'BF_CBC_STRIPE', format: 'MP3_128' }]
+          }
+        ]
+      }
+    );
+
+    const sources = mediaRes.data.data?.[0]?.media?.[0]?.sources;
+    if (!sources || sources.length === 0) {
+      return res.status(404).json({ error: 'URL audio full track tidak tersedia' });
+    }
+
+    const audioUrl = sources[0].url;
+    const bfKey = getBlowfishKey(trackId);
+
+    // Stream & Dekripsi Chunk Audio Deezer secara Realtime
+    const response = await axios({
       method: 'get',
-      url: previewUrl,
+      url: audioUrl,
       responseType: 'stream'
     });
 
     res.setHeader('Content-Type', 'audio/mpeg');
-    audioStream.data.pipe(res);
+
+    let chunkBuffer = Buffer.alloc(0);
+    let chunkIndex = 0;
+
+    response.data.on('data', (data) => {
+      chunkBuffer = Buffer.concat([chunkBuffer, data]);
+
+      // Deezer mengenkripsi tiap blok 2048 bytes (tiap blok ke-3)
+      while (chunkBuffer.length >= 2048) {
+        const block = chunkBuffer.slice(0, 2048);
+        chunkBuffer = chunkBuffer.slice(2048);
+
+        if (chunkIndex % 3 === 0 && block.length === 2048) {
+          const decryptedBlock = decryptBlowfishBlock(block, bfKey);
+          res.write(decryptedBlock);
+        } else {
+          res.write(block);
+        }
+        chunkIndex++;
+      }
+    });
+
+    response.data.on('end', () => {
+      if (chunkBuffer.length > 0) {
+        res.write(chunkBuffer);
+      }
+      res.end();
+    });
+
   } catch (err) {
-    console.error('Deezer stream error:', err.message);
-    res.status(500).json({ error: 'Gagal mengambil audio Deezer' });
+    console.error('Deezer full stream error:', err.message);
+    res.status(500).json({ error: 'Gagal mendekripsi lagu Deezer' });
   }
 });
 
-// 3. Endpoint Stream YouTube (Fallback untuk Lagu Lokal/Indie)
-app.get('/api/stream', (req, res) => {
-  const videoId = req.query.id;
-  if (!videoId) return res.status(400).json({ error: 'Parameter video ID dibutuhkan' });
-
-  const cleanId = videoId.replace('/', '');
-  const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
-
-  res.setHeader('Content-Type', 'audio/webm');
-  res.setHeader('Transfer-Encoding', 'chunked');
-
-  const ytProcess = spawn('yt-dlp', [
-    '--cookies', 'cookies.txt',
-    '--js-runtimes', 'deno',
-    '--remote-components', 'ejs:github',
-    '-f', 'bestaudio/best',
-    '-o', '-',
-    youtubeUrl
-  ]);
-
-  ytProcess.stdout.pipe(res);
-
-  ytProcess.stderr.on('data', (data) => {
-    const logStr = data.toString();
-    if (logStr.includes('ERROR')) console.error(`yt-dlp log: ${logStr}`);
-  });
-
-  req.on('close', () => ytProcess.kill('SIGKILL'));
-});
-
 app.listen(PORT, () => {
-  console.log(`Server SpotiFLAC running on port ${PORT}`);
+  console.log(`Server SpotiFLAC (Deezer Full Track Mode) running on port ${PORT}`);
 });
