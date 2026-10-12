@@ -2,6 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
 const { exec, execSync } = require('child_process');
 
 // Daftarkan folder Deno ke environment PATH
@@ -20,19 +21,18 @@ try {
   console.log("Catatan pip:", err.message);
 }
 
-// Menulis cookies Netscape dari Environment Variable Railway dengan pengecekan ukuran
+// Menulis cookies Netscape dari Environment Variable Railway
 if (process.env.YOUTUBE_COOKIES) {
   const cleanCookies = process.env.YOUTUBE_COOKIES.replace(/\r\n/g, '\n').trim();
   fs.writeFileSync('./cookies.txt', cleanCookies);
-  console.log(`File cookies.txt berhasil disiapkan. Ukuran: ${cleanCookies.length} karakter.`);
-} else {
-  console.warn("PERINGATAN: YOUTUBE_COOKIES tidak ditemukan di Environment Variables!");
+  console.log("File cookies.txt berhasil disiapkan.");
 }
 
 app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
+// Endpoint Proxy Streaming agar Flutter tinggal memutar URL backend kita layaknya file audio biasa
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) {
@@ -42,14 +42,9 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Pastikan file cookies.txt benar-benar ada sebelum yt-dlp dieksekusi
-  if (!fs.existsSync('./cookies.txt')) {
-    return res.status(500).json({ error: 'File cookies.txt gagal dibuat di server' });
-  }
-
-  // Menggunakan cookies.txt dengan runtime Deno yang sekarang sudah aktif
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
-
+  // Menggunakan -f "bestaudio" standar yang sebelumnya berhasil tanpa error log
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
+  
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
@@ -61,10 +56,21 @@ app.get('/api/stream', (req, res) => {
       return res.status(500).json({ error: 'Stream URL kosong dari yt-dlp' });
     }
 
-    return res.status(200).json({
-      status: 'success',
-      id: cleanId,
-      stream_url: streamUrl,
+    // Melakukan pipe (proxy) langsung dari YouTube CDN ke Flutter
+    https.get(streamUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': 'https://www.youtube.com/'
+      }
+    }, (youtubeRes) => {
+      // Teruskan status dan header dari YouTube ke klien Flutter
+      res.writeHead(youtubeRes.statusCode, youtubeRes.headers);
+      youtubeRes.pipe(res);
+    }).on('error', (err) => {
+      console.error(`Proxy Error: ${err.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: 'Gagal melakukan proxy stream audio' });
+      }
     });
   });
 });
