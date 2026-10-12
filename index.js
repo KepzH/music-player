@@ -25,7 +25,7 @@ app.get('/api/stream', (req, res) => {
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
   // Menggunakan konfigurasi standar yang lebih tahan banting di server cloud
-  const command = `yt-dlp --cookies cookies.json -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
+  const command = `yt-dlp --cookies cookies.txt -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
