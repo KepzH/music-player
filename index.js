@@ -3,6 +3,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const Blowfish = require('eg-blowfish');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -37,26 +38,16 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block Blowfish CBC
-function decryptBlowfishBlock(chunk, key) {
-  const iv = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
-  const decipher = crypto.createDecipheriv('bf-cbc', key, iv);
-  decipher.setAutoPadding(false);
-  return Buffer.concat([decipher.update(chunk), decipher.final()]);
+// 2. Dekripsi Block Blowfish CBC dengan Pure JS (eg-blowfish)
+function decryptBlowfishBlockPureJS(chunk, key) {
+  const bf = new Blowfish(key, Blowfish.MODE.CBC, Blowfish.PADDING.NONE);
+  bf.setIv(Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
+  const uint8Decrypted = bf.decode(chunk, Blowfish.TYPE.UINT8_ARRAY);
+  return Buffer.from(uint8Decrypted);
 }
 
-// 3. Dekripsi Buffer Audio dengan Auto-Detect Header ID3/MP3
+// 3. Process & Decrypt Audio
 function processAndDecryptAudio(rawBuffer, bfKey) {
-  const isAlreadyCleanMP3 = 
-    (rawBuffer[0] === 0x49 && rawBuffer[1] === 0x44 && rawBuffer[2] === 0x33) ||
-    (rawBuffer[0] === 0xFF && (rawBuffer[1] & 0xE0) === 0xE0);
-
-  if (isAlreadyCleanMP3) {
-    console.log('[AUTO-DETECT]: File dari CDN ternyata SUDAH BERSIH (Unencrypted MP3). Bypassing decryption!');
-    return rawBuffer;
-  }
-
-  console.log('[AUTO-DETECT]: File terenkripsi Deezer (BF_CBC_STRIPE). Memulai dekripsi...');
   const decryptedChunks = [];
   let offset = 0;
   let chunkIndex = 0;
@@ -67,7 +58,7 @@ function processAndDecryptAudio(rawBuffer, bfKey) {
 
     if (chunkIndex % 3 === 0 && blockSize === 2048) {
       try {
-        decryptedChunks.push(decryptBlowfishBlock(block, bfKey));
+        decryptedChunks.push(decryptBlowfishBlockPureJS(block, bfKey));
       } catch (err) {
         console.error(`[DECRYPT FAIL at chunk ${chunkIndex}]:`, err.message);
         decryptedChunks.push(block);
@@ -180,24 +171,23 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[FETCHING CDN]: ${audioUrl}`);
+    console.log(`[PURE JS FETCHING CDN]: ${audioUrl}`);
 
     const audioDownload = await axios.get(audioUrl, { responseType: 'arraybuffer' });
     const rawBuffer = Buffer.from(audioDownload.data);
 
     const bfKey = getBlowfishKey(realSngId);
     
-    // --- LOG DEBUG HEADER ---
+    // --- LOG DEBUG HEADER PURE JS ---
     console.log('[RAW HEADER HEX]:', rawBuffer.subarray(0, 16).toString('hex'));
     try {
-      const testBlock0 = decryptBlowfishBlock(rawBuffer.subarray(0, 2048), bfKey);
-      console.log('[DECRYPTED HEADER HEX]:', testBlock0.subarray(0, 16).toString('hex'));
-      console.log('[DECRYPTED HEADER ASCII]:', testBlock0.subarray(0, 3).toString('ascii'));
+      const testBlock0 = decryptBlowfishBlockPureJS(rawBuffer.subarray(0, 2048), bfKey);
+      console.log('[PURE JS DECRYPTED HEX]:', testBlock0.subarray(0, 16).toString('hex'));
+      console.log('[PURE JS DECRYPTED ASCII]:', testBlock0.subarray(0, 3).toString('ascii'));
     } catch (e) {
-      console.log('[DECRYPT TEST ERROR]:', e.message);
+      console.log('[PURE JS DECRYPT TEST ERROR]:', e.message);
     }
 
-    // Auto-Detect & Processing
     const finalBuffer = processAndDecryptAudio(rawBuffer, bfKey);
 
     fs.writeFileSync(cachedFilePath, finalBuffer);
