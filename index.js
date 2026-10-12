@@ -5,7 +5,6 @@ const { Transform } = require('stream');
 const ffmpegPath = require('ffmpeg-static');
 const ffmpeg = require('fluent-ffmpeg');
 
-// Set path biner FFmpeg dari package npm
 ffmpeg.setFfmpegPath(ffmpegPath);
 
 const app = express();
@@ -13,7 +12,6 @@ const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Middleware CORS untuk Flutter
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -24,10 +22,10 @@ app.use((req, res, next) => {
 
 const DEEZER_ARL = (process.env.deezer_cookies || process.env.DEEZER_ARL || '').trim();
 
-// 1. Generator Kunci Blowfish dari SNG_ID
-function getBlowfishKey(trackId) {
+// 1. Generator Kunci Blowfish dari SNG_ID Asli
+function getBlowfishKey(sngId) {
   const SECRET = 'g42fks physical';
-  const md5Id = crypto.createHash('md5').update(trackId.toString(), 'ascii').digest('hex');
+  const md5Id = crypto.createHash('md5').update(sngId.toString(), 'ascii').digest('hex');
   
   const bfKey = Buffer.alloc(16);
   for (let i = 0; i < 16; i++) {
@@ -37,7 +35,7 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block Blowfish CBC (2048 Bytes)
+// 2. Dekripsi Block Blowfish CBC
 function decryptBlowfishBlock(chunk, key) {
   try {
     const iv = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -49,7 +47,7 @@ function decryptBlowfishBlock(chunk, key) {
   }
 }
 
-// 3. Transform Stream Dekripsi Presisi 2048 Bytes
+// 3. Transform Stream Dekripsi 2048 Bytes
 class DeezerDecryptor extends Transform {
   constructor(bfKey) {
     super();
@@ -84,30 +82,7 @@ class DeezerDecryptor extends Transform {
   }
 }
 
-// Endpoint Search
-app.get('/api/search', async (req, res) => {
-  const query = req.query.q;
-  if (!query) return res.status(400).json({ error: 'Query pencarian kosong' });
-
-  try {
-    const deezerRes = await axios.get(`https://api.deezer.com/search?q=${encodeURIComponent(query)}`);
-    const tracks = deezerRes.data.data.map(item => ({
-      id: item.id,
-      title: item.title,
-      artist: item.artist.name,
-      album: item.album.title,
-      thumbnail: item.album.cover_medium,
-      duration: item.duration,
-      type: 'deezer'
-    }));
-
-    res.json({ results: tracks });
-  } catch (err) {
-    res.status(500).json({ error: 'Gagal mencari lagu' });
-  }
-});
-
-// Endpoint Stream
+// Stream Endpoint
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
@@ -138,7 +113,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(401).json({ error: 'ARL Cookie kedaluwarsa atau tidak valid' });
     }
 
-    // Step 2: Song Data & REAL SNG_ID
+    // Step 2: Song Data & SNG_ID Asli
     const songRes = await axios.post(
       `https://www.deezer.com/ajax/gw-light.php?method=song.getData&api_version=1.0&api_token=${apiToken}`,
       { sng_id: trackId },
@@ -146,7 +121,8 @@ app.get('/api/deezer-stream', async (req, res) => {
     );
 
     const songData = songRes.data?.results;
-    const realSngId = songData?.SNG_ID || trackId;
+    // Ambil SNG_ID resmi dari response Deezer
+    const realSngId = songData?.SNG_ID || songData?.DATA?.SNG_ID || trackId;
     const trackToken = songData?.TRACK_TOKEN;
 
     if (!trackToken) {
@@ -174,11 +150,12 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[DECRYPTION + FFMPEG PIPELINE ACTIVE] Track ID: ${realSngId}`);
+    console.log(`[PIPELINE ACTIVE] Real SNG_ID: ${realSngId} | URL: ${audioUrl}`);
 
+    // Kunci Blowfish dibuat berdasarkan SNG_ID asli
     const bfKey = getBlowfishKey(realSngId);
 
-    // Step 4: Stream CDN -> Decryptor -> FFmpeg -> Client Response
+    // Step 4: Stream CDN -> Decryptor -> FFmpeg -> Res
     const cdnResponse = await axios({
       method: 'get',
       url: audioUrl,
@@ -195,7 +172,6 @@ app.get('/api/deezer-stream', async (req, res) => {
       decryptor.destroy();
     });
 
-    // Pipa Data: CDN -> Dekripsi Blowfish -> FFmpeg Normalizer -> Express Res
     ffmpeg(cdnResponse.data.pipe(decryptor))
       .inputFormat('mp3')
       .audioCodec('libmp3lame')
@@ -219,3 +195,4 @@ app.get('/api/deezer-stream', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server SpotiFLAC running on port ${PORT}`);
 });
+
