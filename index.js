@@ -1,6 +1,5 @@
 const express = require('express');
 const cors = require('cors');
-const fs = require('fs');
 const path = require('path');
 const { exec, execSync } = require('child_process');
 
@@ -20,13 +19,6 @@ try {
   console.log("Catatan pip:", err.message);
 }
 
-// Menulis cookies Netscape dari Environment Variable Railway
-if (process.env.YOUTUBE_COOKIES) {
-  const cleanCookies = process.env.YOUTUBE_COOKIES.replace(/\r\n/g, '\n').trim();
-  fs.writeFileSync('./cookies.txt', cleanCookies);
-  console.log("File cookies.txt berhasil disiapkan.");
-}
-
 app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
@@ -40,8 +32,8 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Menggunakan Deno sebagai runtime resmi yang didukung yt-dlp
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
+  // Menggunakan Deno runtime + klien Android untuk bypass age-gate & proteksi IP datacenter
+  const command = `yt-dlp --js-runtimes deno --remote-components ejs:github --extractor-args "youtube:player_client=android" -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
