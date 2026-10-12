@@ -116,13 +116,13 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggabungkan client mweb dan webmusic untuk melompati enkripsi SABR major label
+  // Menggunakan player-client tv / embedded dan format universal tanpa terjebak SABR
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--extractor-args', 'youtube:player-client=mweb,webmusic',
-    '-f', 'bestaudio/best',
+    '--extractor-args', 'youtube:player-client=tv',
+    '-f', 'ba/b',
     '-o', '-',
     youtubeUrl
   ]);
