@@ -3,7 +3,8 @@ const axios = require('axios');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { Blowfish } = require('blowfish-node');
+const BlowfishModule = require('blowfish-node');
+const Blowfish = BlowfishModule.Blowfish || BlowfishModule;
 
 const app = express();
 const PORT = process.env.PORT || 3000;
