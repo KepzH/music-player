@@ -2,8 +2,7 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const { exec, execSync } = require('child_process');
+const { spawn, execSync } = require('child_process');
 
 // Daftarkan folder Deno ke environment PATH
 const denoBinPath = path.join(process.env.HOME || '/root', '.deno', 'bin');
@@ -32,7 +31,7 @@ app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
-// Endpoint Proxy Streaming agar Flutter tinggal memutar URL backend kita layaknya file audio biasa
+// Endpoint Streaming langsung merender audio via FFmpeg ke Flutter
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) {
@@ -42,36 +41,38 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Menggunakan -f "bestaudio" standar yang sebelumnya berhasil tanpa error log
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
-  
-  exec(command, (error, stdout, stderr) => {
-    if (error) {
-      console.error(`Error yt-dlp: ${error.message}`);
-      return res.status(500).json({ error: 'Gagal mengambil audio stream', details: stderr });
-    }
+  // Set header agar Flutter tahu ini adalah file audio stream (mp3/webm)
+  res.setHeader('Content-Type', 'audio/mpeg');
+  res.setHeader('Transfer-Encoding', 'chunked');
 
-    const streamUrl = stdout.trim().split('\n')[0];
-    if (!streamUrl) {
-      return res.status(500).json({ error: 'Stream URL kosong dari yt-dlp' });
-    }
+  // Jalankan yt-dlp yang langsung di-pipe ke stdout dengan bantuan ffmpeg internal yt-dlp
+  const ytProcess = spawn('yt-dlp', [
+    '--cookies', 'cookies.txt',
+    '--js-runtimes', 'deno',
+    '--remote-components', 'ejs:github',
+    '-f', 'bestaudio',
+    '-x', // Extract audio
+    '--audio-format', 'mp3', // Konversi otomatis ke MP3 standar yang pasti bunyi
+    '-o', '-', // Output ke stdout agar bisa di-pipe ke Express
+    youtubeUrl
+  ]);
 
-    // Melakukan pipe (proxy) langsung dari YouTube CDN ke Flutter
-    https.get(streamUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Referer': 'https://www.youtube.com/'
-      }
-    }, (youtubeRes) => {
-      // Teruskan status dan header dari YouTube ke klien Flutter
-      res.writeHead(youtubeRes.statusCode, youtubeRes.headers);
-      youtubeRes.pipe(res);
-    }).on('error', (err) => {
-      console.error(`Proxy Error: ${err.message}`);
-      if (!res.headersSent) {
-        res.status(500).json({ error: 'Gagal melakukan proxy stream audio' });
-      }
-    });
+  ytProcess.stdout.pipe(res);
+
+  ytProcess.stderr.on('data', (data) => {
+    console.error(`yt-dlp log: ${data.toString()}`);
+  });
+
+  ytProcess.on('error', (err) => {
+    console.error(`Process error: ${err.message}`);
+    if (!res.headersSent) {
+      res.status(500).json({ error: 'Gagal memproses audio stream' });
+    }
+  });
+
+  // Hentikan proses jika klien Flutter menutup koneksi
+  req.on('close', () => {
+    ytProcess.kill('SIGKILL');
   });
 });
 
