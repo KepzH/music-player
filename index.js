@@ -1,6 +1,8 @@
 const express = require('express');
 const axios = require('axios');
 const crypto = require('crypto');
+const { Transform } = require('stream');
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 
@@ -30,7 +32,7 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block Blowfish CBC (2048 Bytes)
+// 2. Fungsi Dekripsi Blok Blowfish CBC (2048 Bytes)
 function decryptBlowfishBlock(chunk, key) {
   try {
     const iv = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]);
@@ -42,7 +44,46 @@ function decryptBlowfishBlock(chunk, key) {
   }
 }
 
-// Endpoint Search
+// 3. Transform Stream Khusus Dekripsi Deezer (Presisi 2048 Bytes & Bebas Buffer Misalignment)
+class DeezerDecryptor extends Transform {
+  constructor(bfKey) {
+    super();
+    this.bfKey = bfKey;
+    this.buffer = Buffer.alloc(0);
+    this.chunkIndex = 0;
+  }
+
+  _transform(chunk, encoding, callback) {
+    // Gabungkan data baru ke buffer internal
+    this.buffer = Buffer.concat([this.buffer, chunk]);
+
+    // Hanya proses jika buffer memiliki minimal 2048 bytes
+    while (this.buffer.length >= 2048) {
+      const block = this.buffer.subarray(0, 2048);
+      this.buffer = this.buffer.subarray(2048);
+
+      // Blok ke-0, 3, 6, 9... dienkripsi oleh Deezer
+      if (this.chunkIndex % 3 === 0) {
+        const decryptedBlock = decryptBlowfishBlock(block, this.bfKey);
+        this.push(decryptedBlock);
+      } else {
+        this.push(block);
+      }
+      this.chunkIndex++;
+    }
+    callback();
+  }
+
+  _flush(callback) {
+    // Teruskan sisa byte di akhir lagu (jika < 2048 bytes) tanpa didekripsi
+    if (this.buffer.length > 0) {
+      this.push(this.buffer);
+    }
+    callback();
+  }
+}
+
+// Search Endpoint
 app.get('/api/search', async (req, res) => {
   const query = req.query.q;
   if (!query) return res.status(400).json({ error: 'Query pencarian kosong' });
@@ -65,7 +106,7 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// Endpoint Stream
+// Stream Endpoint
 app.get('/api/deezer-stream', async (req, res) => {
   const trackId = req.query.id;
   if (!trackId) return res.status(400).json({ error: 'Track ID dibutuhkan' });
@@ -111,7 +152,7 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'Track token lagu tidak ditemukan' });
     }
 
-    // Step 3: Stream CDN URL dengan format wajib BF_CBC_STRIPE
+    // Step 3: Stream CDN URL dari media.deezer.com
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -134,52 +175,30 @@ app.get('/api/deezer-stream', async (req, res) => {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[STREAMING ACTIVE] Track ID: ${realSngId}`);
+    console.log(`[DEEZER STREAM TRANSFORM ACTIVE] Track ID: ${realSngId}`);
 
     const bfKey = getBlowfishKey(realSngId);
 
-    // Step 4: Stream Audio dari CDN Deezer
+    // Step 4: Stream Audio dari CDN via Transform Stream
     const cdnResponse = await axios({
       method: 'get',
       url: audioUrl,
       responseType: 'stream'
     });
 
-    // Set Header Kunci: Melarang Range Request agar siklus dekripsi 2048-bytes konsisten
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Accept-Ranges', 'none');
 
+    // Buat instance decryptor baru untuk tiap request
+    const decryptor = new DeezerDecryptor(bfKey);
+
     req.on('close', () => {
       cdnResponse.data.destroy();
+      decryptor.destroy();
     });
 
-    let chunkBuffer = Buffer.alloc(0);
-    let chunkIndex = 0;
-
-    cdnResponse.data.on('data', (data) => {
-      chunkBuffer = Buffer.concat([chunkBuffer, data]);
-
-      while (chunkBuffer.length >= 2048) {
-        const block = chunkBuffer.subarray(0, 2048);
-        chunkBuffer = chunkBuffer.subarray(2048);
-
-        // Hanya dekripsi blok ke-0, 3, 6, 9...
-        if (chunkIndex % 3 === 0) {
-          const decryptedBlock = decryptBlowfishBlock(block, bfKey);
-          res.write(decryptedBlock);
-        } else {
-          res.write(block);
-        }
-        chunkIndex++;
-      }
-    });
-
-    cdnResponse.data.on('end', () => {
-      if (chunkBuffer.length > 0) {
-        res.write(chunkBuffer);
-      }
-      res.end();
-    });
+    // Pipelining otomatis: CDN -> Decryptor (2048-bytes chunking) -> Express Response
+    cdnResponse.data.pipe(decryptor).pipe(res);
 
   } catch (err) {
     console.error('Deezer stream error:', err.response?.status || err.message);
