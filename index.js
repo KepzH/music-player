@@ -32,20 +32,21 @@ app.get('/', (req, res) => {
 });
 
 // Endpoint untuk mencari lagu/video
+// Endpoint untuk mencari lagu/video (Versi Ringan & Cepat)
 app.get('/api/search', (req, res) => {
   const searchQuery = req.query.q;
   if (!searchQuery) {
     return res.status(400).json({ error: 'Parameter query q dibutuhkan' });
   }
 
-  // Menggunakan yt-dlp untuk mencari 10 video teratas di YouTube dalam format JSON
+  // Menggunakan yt-dlp dengan flat-playlist agar proses jauh lebih cepat
   const ytSearch = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--dump-json',
-    '--default-search', 'ytsearch10',
-    searchQuery
+    '--print', '%(id)s||%(title)s||%(uploader)s||%(thumbnail)s',
+    '--flat-playlist',
+    'ytsearch10:' + searchQuery
   ]);
 
   let dataBuffer = '';
@@ -67,20 +68,18 @@ app.get('/api/search', (req, res) => {
     }
 
     try {
-      // yt-dlp --dump-json mengirim baris JSON terpisah untuk setiap video, gabungkan jadi array
       const lines = dataBuffer.trim().split('\n').filter(line => line.length > 0);
       const results = lines.map(line => {
-        try {
-          const item = JSON.parse(line);
+        const parts = line.split('||');
+        if (parts.length >= 4) {
           return {
-            id: item.id,
-            title: item.title,
-            artist: item.uploader || item.channel,
-            thumbnail: item.thumbnail,
+            id: parts[0],
+            title: parts[1],
+            artist: parts[2],
+            thumbnail: parts[3],
           };
-        } catch (e) {
-          return null;
         }
+        return null;
       }).filter(item => item !== null);
 
       res.status(200).json(results);
