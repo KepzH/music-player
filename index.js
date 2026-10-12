@@ -116,12 +116,13 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Konfigurasi standar paling stabil yang dulu dipakai
+  // Menggunakan player-client Android untuk bypass proteksi SABR-only streaming
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '-f', 'bestaudio',
+    '--extractor-args', 'youtube:player-client=android',
+    '-f', 'bestaudio/best',
     '-o', '-',
     youtubeUrl
   ]);
@@ -130,7 +131,7 @@ app.get('/api/stream', (req, res) => {
 
   ytProcess.stderr.on('data', (data) => {
     const logStr = data.toString();
-    if (logStr.includes('ERROR') || logStr.includes('WARNING')) {
+    if (logStr.includes('ERROR')) {
       console.error(`yt-dlp log: ${logStr}`);
     }
   });
