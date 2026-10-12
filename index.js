@@ -1,20 +1,15 @@
 const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
-const path = require('path');
 const { exec, execSync } = require('child_process');
-
-// Masukkan direktori Deno ke environment PATH secara otomatis agar terbaca yt-dlp
-const denoBinPath = path.join(process.env.HOME || '/root', '.deno', 'bin');
-process.env.PATH = `${denoBinPath}:${process.env.PATH}`;
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Pastikan yt-dlp dan komponen EJS selalu siap
+// Pastikan yt-dlp dan komponen EJS selalu siap saat booting
 try {
-  console.log("Memeriksa/memperbarui yt-dlp...");
+  console.log("Memperbarui yt-dlp...");
   execSync('pip install --upgrade --break-system-packages "yt-dlp[default]"');
 } catch (err) {
   console.log("Catatan pip:", err.message);
@@ -40,8 +35,8 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Perintah standar yt-dlp dengan dukungan Deno & EJS komponen
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
+  // Menggunakan --js-runtimes node karena Node.js sudah tersedia secara native di container
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes node --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
   
   exec(command, (error, stdout, stderr) => {
     if (error) {
