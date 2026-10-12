@@ -3,7 +3,7 @@ const axios = require('axios');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const Blowfish = require('eg-blowfish');
+const { Blowfish } = require('blowfish-node');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -38,7 +38,7 @@ function getBlowfishKey(trackId) {
   return bfKey;
 }
 
-// 2. Dekripsi Block Blowfish CBC dengan Pure JS (eg-blowfish)
+// 2. Dekripsi Block Blowfish CBC Pure JS (Tanpa OpenSSL Native)
 function decryptBlowfishBlockPureJS(chunk, key) {
   const bf = new Blowfish(key, Blowfish.MODE.CBC, Blowfish.PADDING.NONE);
   bf.setIv(Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
@@ -46,7 +46,7 @@ function decryptBlowfishBlockPureJS(chunk, key) {
   return Buffer.from(uint8Decrypted);
 }
 
-// 3. Process & Decrypt Audio
+// 3. Process & Decrypt Audio Utuh dari Byte 0
 function processAndDecryptAudio(rawBuffer, bfKey) {
   const decryptedChunks = [];
   let offset = 0;
@@ -178,7 +178,7 @@ app.get('/api/deezer-stream', async (req, res) => {
 
     const bfKey = getBlowfishKey(realSngId);
     
-    // --- LOG DEBUG HEADER PURE JS ---
+    // LOG DEBUG HEADER PURE JS
     console.log('[RAW HEADER HEX]:', rawBuffer.subarray(0, 16).toString('hex'));
     try {
       const testBlock0 = decryptBlowfishBlockPureJS(rawBuffer.subarray(0, 2048), bfKey);
