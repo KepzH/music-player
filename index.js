@@ -116,12 +116,12 @@ app.get('/api/stream', (req, res) => {
   res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Menggunakan player-client mweb (Mobile Web) yang mendukung cookies dan aman dari SABR
+  // Menggabungkan client mweb dan webmusic untuk melompati enkripsi SABR major label
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--extractor-args', 'youtube:player-client=mweb',
+    '--extractor-args', 'youtube:player-client=mweb,webmusic',
     '-f', 'bestaudio/best',
     '-o', '-',
     youtubeUrl
