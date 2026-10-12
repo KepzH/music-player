@@ -31,7 +31,6 @@ app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
-// Endpoint Streaming langsung merender audio via FFmpeg ke Flutter
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) {
@@ -41,26 +40,27 @@ app.get('/api/stream', (req, res) => {
   const cleanId = videoId.replace('/', '');
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  // Set header agar Flutter tahu ini adalah file audio stream (mp3/webm)
-  res.setHeader('Content-Type', 'audio/mpeg');
+  // Set header untuk streaming audio
+  res.setHeader('Content-Type', 'audio/webm');
   res.setHeader('Transfer-Encoding', 'chunked');
 
-  // Jalankan yt-dlp yang langsung di-pipe ke stdout dengan bantuan ffmpeg internal yt-dlp
   const ytProcess = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
     '-f', 'bestaudio',
-    '-x', // Extract audio
-    '--audio-format', 'mp3', // Konversi otomatis ke MP3 standar yang pasti bunyi
-    '-o', '-', // Output ke stdout agar bisa di-pipe ke Express
+    '-o', '-',
     youtubeUrl
   ]);
 
   ytProcess.stdout.pipe(res);
 
   ytProcess.stderr.on('data', (data) => {
-    console.error(`yt-dlp log: ${data.toString()}`);
+    // Sembunyikan log progress download agar terminal railway tidak kotor, tampilkan error saja jika ada
+    const logStr = data.toString();
+    if (logStr.includes('ERROR') || logStr.includes('WARNING')) {
+      console.error(`yt-dlp log: ${logStr}`);
+    }
   });
 
   ytProcess.on('error', (err) => {
@@ -70,7 +70,6 @@ app.get('/api/stream', (req, res) => {
     }
   });
 
-  // Hentikan proses jika klien Flutter menutup koneksi
   req.on('close', () => {
     ytProcess.kill('SIGKILL');
   });
