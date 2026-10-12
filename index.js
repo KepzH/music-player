@@ -1,12 +1,11 @@
 const express = require('express');
 const axios = require('axios');
-const crypto = require('crypto');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Middleware CORS Lengkap untuk Flutter (Mobile, Web, & Desktop)
+// Middleware CORS Lengkap untuk Flutter
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin', '*');
   res.header('Access-Control-Allow-Methods', 'GET, OPTIONS');
@@ -16,29 +15,6 @@ app.use((req, res, next) => {
 });
 
 const DEEZER_ARL = (process.env.deezer_cookies || process.env.DEEZER_ARL || '').trim();
-
-// 1. Helper Kunci Blowfish (16-Byte Precision)
-function getBlowfishKey(trackId) {
-  const SECRET = 'g42fks physical';
-  const md5Id = crypto.createHash('md5').update(trackId.toString(), 'ascii').digest('hex');
-  const bfKey = Buffer.alloc(16);
-  for (let i = 0; i < 16; i++) {
-    const secretCode = i < SECRET.length ? SECRET.charCodeAt(i) : 0;
-    bfKey[i] = md5Id.charCodeAt(i) ^ md5Id.charCodeAt(i + 16) ^ secretCode;
-  }
-  return bfKey;
-}
-
-// 2. Dekripsi Block Blowfish CBC
-function decryptBlowfishBlock(chunk, key) {
-  try {
-    const cipher = crypto.createDecipheriv('bf-cbc', key, Buffer.from([0, 1, 2, 3, 4, 5, 6, 7]));
-    cipher.setAutoPadding(false);
-    return Buffer.concat([cipher.update(chunk), cipher.final()]);
-  } catch (e) {
-    return chunk;
-  }
-}
 
 // Search Endpoint
 app.get('/api/search', async (req, res) => {
@@ -101,13 +77,12 @@ app.get('/api/deezer-stream', async (req, res) => {
       { headers: { ...baseHeaders, 'Cookie': combinedCookies } }
     );
 
-    const realTrackId = songRes.data?.results?.SNG_ID || trackId;
     const trackToken = songRes.data?.results?.TRACK_TOKEN;
     if (!trackToken) {
       return res.status(404).json({ error: 'Track token lagu tidak ditemukan' });
     }
 
-    // Step 3: Stream CDN URL & Cipher Format
+    // Step 3: Stream CDN URL dari media.deezer.com
     const mediaRes = await axios.post(
       'https://media.deezer.com/v1/get_url',
       {
@@ -126,25 +101,14 @@ app.get('/api/deezer-stream', async (req, res) => {
       { headers: baseHeaders }
     );
 
-    const mediaObj = mediaRes.data?.data?.[0]?.media?.[0];
-    const audioUrl = mediaObj?.sources?.[0]?.url;
-
-    // Aman membaca tipe cipher baik berupa String maupun Object
-    let cipherType = 'NONE';
-    if (typeof mediaObj?.cipher === 'string') {
-      cipherType = mediaObj.cipher;
-    } else if (mediaObj?.cipher && typeof mediaObj.cipher.type === 'string') {
-      cipherType = mediaObj.cipher.type;
-    }
-
+    const audioUrl = mediaRes.data?.data?.[0]?.media?.[0]?.sources?.[0]?.url;
     if (!audioUrl) {
       return res.status(404).json({ error: 'URL audio stream tidak ditemukan dari Deezer' });
     }
 
-    console.log(`[DEEZER STREAM URL]: ${audioUrl}`);
-    console.log(`[DEEZER CIPHER DETECTED]: ${cipherType}`);
+    console.log(`[DEEZER DIRECT STREAMING]: ${audioUrl}`);
 
-    // Step 4: Streaming Audio
+    // Step 4: Stream Audio Langsung (Direct Pipe)
     const response = await axios({
       method: 'get',
       url: audioUrl,
@@ -153,48 +117,12 @@ app.get('/api/deezer-stream', async (req, res) => {
 
     res.setHeader('Content-Type', 'audio/mpeg');
 
-    // Hentikan download jika koneksi Flutter/Browser terputus
     req.on('close', () => {
       response.data.destroy();
     });
 
-    // Jika stream TANPA enkripsi (cipher: NONE), pipe langsung tanpa dekripsi
-    if (cipherType.toUpperCase() === 'NONE') {
-      console.log('[STREAM MODE]: Direct Unencrypted Stream (Pipe)');
-      return response.data.pipe(res);
-    }
-
-    // Jika stream terenkripsi (BF_CBC_STRIPE), lakukan dekripsi Blowfish CBC per 2048 bytes
-    console.log('[STREAM MODE]: Blowfish CBC Decryption Active');
-    const bfKey = getBlowfishKey(realTrackId);
-
-    let chunkBuffer = Buffer.alloc(0);
-    let chunkIndex = 0;
-
-    response.data.on('data', (data) => {
-      chunkBuffer = Buffer.concat([chunkBuffer, data]);
-
-      while (chunkBuffer.length >= 2048) {
-        const block = chunkBuffer.subarray(0, 2048);
-        chunkBuffer = chunkBuffer.subarray(2048);
-
-        // Setiap blok ke-3 dienkripsi oleh Deezer
-        if (chunkIndex % 3 === 0) {
-          const decryptedBlock = decryptBlowfishBlock(block, bfKey);
-          res.write(decryptedBlock);
-        } else {
-          res.write(block);
-        }
-        chunkIndex++;
-      }
-    });
-
-    response.data.on('end', () => {
-      if (chunkBuffer.length > 0) {
-        res.write(chunkBuffer);
-      }
-      res.end();
-    });
+    // Meneruskan stream audio utuh secara langsung ke Flutter / Browser
+    return response.data.pipe(res);
 
   } catch (err) {
     console.error('Deezer stream error:', err.message);
@@ -205,3 +133,4 @@ app.get('/api/deezer-stream', async (req, res) => {
 app.listen(PORT, () => {
   console.log(`Server SpotiFLAC running on port ${PORT}`);
 });
+
