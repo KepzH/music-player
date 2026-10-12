@@ -31,6 +31,69 @@ app.get('/', (req, res) => {
   res.status(200).json({ status: 'active', message: 'SpotiFLAC Backend Running' });
 });
 
+// Endpoint untuk mencari lagu/video
+app.get('/api/search', (req, res) => {
+  const searchQuery = req.query.q;
+  if (!searchQuery) {
+    return res.status(400).json({ error: 'Parameter query q dibutuhkan' });
+  }
+
+  // Menggunakan yt-dlp untuk mencari 10 video teratas di YouTube dalam format JSON
+  const ytSearch = spawn('yt-dlp', [
+    '--cookies', 'cookies.txt',
+    '--js-runtimes', 'deno',
+    '--remote-components', 'ejs:github',
+    '--dump-json',
+    '--default-search', 'ytsearch10',
+    searchQuery
+  ]);
+
+  let dataBuffer = '';
+
+  ytSearch.stdout.on('data', (chunk) => {
+    dataBuffer += chunk;
+  });
+
+  ytSearch.stderr.on('data', (data) => {
+    const logStr = data.toString();
+    if (logStr.includes('ERROR')) {
+      console.error(`yt-dlp search error: ${logStr}`);
+    }
+  });
+
+  ytSearch.on('close', (code) => {
+    if (code !== 0) {
+      return res.status(500).json({ error: 'Gagal melakukan pencarian' });
+    }
+
+    try {
+      // yt-dlp --dump-json mengirim baris JSON terpisah untuk setiap video, gabungkan jadi array
+      const lines = dataBuffer.trim().split('\n').filter(line => line.length > 0);
+      const results = lines.map(line => {
+        try {
+          const item = JSON.parse(line);
+          return {
+            id: item.id,
+            title: item.title,
+            artist: item.uploader || item.channel,
+            thumbnail: item.thumbnail,
+          };
+        } catch (e) {
+          return null;
+        }
+      }).filter(item => item !== null);
+
+      res.status(200).json(results);
+    } catch (e) {
+      res.status(500).json({ error: 'Gagal memparsing hasil pencarian' });
+    }
+  });
+
+  req.on('close', () => {
+    ytSearch.kill('SIGKILL');
+  });
+});
+
 app.get('/api/stream', (req, res) => {
   const videoId = req.query.id;
   if (!videoId) {
@@ -56,7 +119,6 @@ app.get('/api/stream', (req, res) => {
   ytProcess.stdout.pipe(res);
 
   ytProcess.stderr.on('data', (data) => {
-    // Sembunyikan log progress download agar terminal railway tidak kotor, tampilkan error saja jika ada
     const logStr = data.toString();
     if (logStr.includes('ERROR') || logStr.includes('WARNING')) {
       console.error(`yt-dlp log: ${logStr}`);
