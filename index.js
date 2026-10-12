@@ -48,8 +48,8 @@ app.get('/api/stream', (req, res) => {
   }
 
   // Menggunakan cookies.txt dengan runtime Deno yang sekarang sudah aktif
-  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio" "${youtubeUrl}"`;
-  
+  const command = `yt-dlp --cookies cookies.txt --js-runtimes deno --remote-components ejs:github -g -f "bestaudio[ext=m4a]/bestaudio" "${youtubeUrl}"`;
+
   exec(command, (error, stdout, stderr) => {
     if (error) {
       console.error(`Error yt-dlp: ${error.message}`);
