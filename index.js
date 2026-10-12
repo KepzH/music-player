@@ -39,14 +39,13 @@ app.get('/api/search', (req, res) => {
     return res.status(400).json({ error: 'Parameter query q dibutuhkan' });
   }
 
-  // Menggunakan yt-dlp dengan flat-playlist agar proses jauh lebih cepat
   const ytSearch = spawn('yt-dlp', [
     '--cookies', 'cookies.txt',
     '--js-runtimes', 'deno',
     '--remote-components', 'ejs:github',
-    '--print', '%(id)s||%(title)s||%(uploader)s||%(thumbnail)s',
-    '--flat-playlist',
-    'ytsearch10:' + searchQuery
+    '--dump-json',
+    '--default-search', 'ytsearch10',
+    searchQuery
   ]);
 
   let dataBuffer = '';
@@ -56,10 +55,7 @@ app.get('/api/search', (req, res) => {
   });
 
   ytSearch.stderr.on('data', (data) => {
-    const logStr = data.toString();
-    if (logStr.includes('ERROR')) {
-      console.error(`yt-dlp search error: ${logStr}`);
-    }
+    // Abaikan error kecil
   });
 
   ytSearch.on('close', (code) => {
@@ -70,17 +66,18 @@ app.get('/api/search', (req, res) => {
     try {
       const lines = dataBuffer.trim().split('\n').filter(line => line.length > 0);
       const results = lines.map(line => {
-        const parts = line.split('||');
-        if (parts.length >= 4) {
+        try {
+          const item = JSON.parse(line);
           return {
-            id: parts[0],
-            title: parts[1],
-            artist: parts[2],
-            thumbnail: parts[3],
+            id: item.id || '',
+            title: item.title || 'Tanpa Judul',
+            artist: item.uploader || item.channel || 'Artis Tidak Diketahui',
+            thumbnail: item.thumbnail || (item.thumbnails && item.thumbnails.length > 0 ? item.thumbnails[0].url : ''),
           };
+        } catch (e) {
+          return null;
         }
-        return null;
-      }).filter(item => item !== null);
+      }).filter(item => item !== null && item.id !== '');
 
       res.status(200).json(results);
     } catch (e) {
